@@ -74,6 +74,7 @@ class CurbsideEnv(Env):
 			# OBSERVATION 2
 			# get current status (0 = not yet parked, 1=parking completed)
 			state = state_translation[self.k.vehicle.get_state(rl_id)]
+			state = state in [3,4]
 
 			# OBSERVATION 3
 			# get current speed normalized by max speed
@@ -107,8 +108,8 @@ class CurbsideEnv(Env):
 			pzone = self.k.vehicle.get_pzone(rl_id,self)
 			state = self.k.vehicle.get_state(rl_id)
 
-			if state == "outflow":
-				reward += self.k.vehicle.get_velocity(rl_id)				
+			if state in ['parked', "outflow"]:
+				reward += self.k.vehicle.get_speed(rl_id)				
 			else:
 				if edge == f"parking_{pzone}": 
 					reward += 1
