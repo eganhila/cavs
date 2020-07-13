@@ -25,8 +25,6 @@ class CurbsideEnv(Env):
 
 	    # maximum number of controlled vehicles
 	    self.num_rl = env_params.additional_params["num_rl"]
-
-
 	    super().__init__(env_params, sim_params, network, simulator)
 
 	@property
@@ -38,11 +36,6 @@ class CurbsideEnv(Env):
 	        shape=(self.num_rl, ),
 	        dtype=np.float32)
 
-	@property
-	def observation_space(self):
-	    """See class definition."""
-	    return Box(low=-1, high=1, shape=(4 * self.num_rl, ), dtype=np.float32)
-
 	def _apply_rl_actions(self, rl_actions):
 		"""See class definition."""
 		for i,rl_id in enumerate(self.k.vehicle.get_rl_ids()):
@@ -51,6 +44,13 @@ class CurbsideEnv(Env):
 							rl_id).get_action(self)
 			self.k.vehicle.apply_lane_change(rl_id,direction=target_lane)
 
+
+class CurbsideSoloEnv(CurbsideEnv):
+	@property
+	def observation_space(self):
+	    """See class definition."""
+	    return Box(low=-1, high=1, shape=(4 * self.num_rl, ), dtype=np.float32)
+	
 	def get_state(self, rl_id=None, **kwargs):
 		max_speed = self.k.network.max_speed()*3
 		max_length = self.k.network.length()
@@ -123,3 +123,95 @@ class CurbsideEnv(Env):
 		total = eta_reward*reward - eta_cost*cost #eta1 * cost1 + eta2 * cost2 #+ eta3*cost3
 		return total
 
+
+class CurbsideTrafficEnv(CurbsideEnv):
+	@property
+	def observation_space(self):
+	    """See class definition."""
+	    return Box(low=-1, high=1, shape=(4 * self.num_rl, ), dtype=np.float32)
+	
+	def get_state(self, rl_id=None, **kwargs):
+		max_speed = self.k.network.max_speed()*3
+		max_length = self.k.network.length()
+		L_p = self.network.net_params.additional_params["length_parking"] 
+		L_i = self.network.net_params.additional_params["length_inflow"] 
+		L_o = self.network.net_params.additional_params["length_outflow"] 
+		N_p = self.network.net_params.additional_params["number_parking_zones"]
+		L = L_p + L_i + L_o
+
+		N_obvs = 7
+
+		observation = [0 for _ in range(N_obvs * self.num_rl)]
+
+		for i, rl_id in enumerate(self.k.vehicle.get_rl_ids()):
+
+			# OBSERVATION 1
+			# get distance to parking spot normalized by length of parking area
+
+			l = self.k.vehicle.get_distance_to_pzone(rl_id, self)
+			N = self.k.vehicle.get_pzone(rl_id, self)
+			x = self.k.vehicle.get_global_position(rl_id, self) 
+
+			# OBSERVATION 2
+			# get current status (0 = not yet parked, 1=parking completed)
+			state = state_translation[self.k.vehicle.get_state(rl_id)]
+			state = state in [3,4]
+
+			# OBSERVATION 3
+			# get current speed normalized by max speed
+			this_speed = self.k.vehicle.get_speed(rl_id)
+
+			lead_id = self.k.vehicle.get_leader(rl_id)
+			if lead_id in ["", None]:
+                # in case leader is not visible
+                lead_speed = max_speed
+                lead_head = max_length
+            else:
+				lead_speed = self.k.vehicle.get_speed(lead_id)
+				lead_head = self.k.vehicle.get_x_by_id(lead_id) \
+							- self.k.vehicle.get_x_by_id(rl_id) \
+							- self.k.vehicle.get_length(rl_id)
+
+			observation[N_obvs * i + 0] = x / L
+			observation[N_obvs * i + 1] = l / L
+			observation[N_obvs * i + 2] = N / N_p
+			observation[N_obvs * i + 3] = (this_speed) / max_speed
+			observation[N_obvs * i + 4] = state / 4 # number of states
+			observation[N_obvs * i + 5] = lead_speed / max_speed
+			observation[N_obvs * i + 6] = lead_head / max_length
+
+		return observation
+
+	def compute_reward(self, rl_actions, **kwargs):
+		"""See class definition."""
+		L_p = self.network.net_params.additional_params["length_parking"] 
+
+		if rl_actions is None:
+			return 0
+		
+		if kwargs["fail"]:
+			return -10
+
+		reward = 0
+		cost = 0
+
+		for rl_id in self.k.vehicle.get_rl_ids():
+
+			edge = self.k.vehicle.get_edge(rl_id)
+			pzone = self.k.vehicle.get_pzone(rl_id,self)
+			state = self.k.vehicle.get_state(rl_id)
+
+			if state in ['parked', "outflow"]:
+				reward += self.k.vehicle.get_speed(rl_id)				
+			else:
+				if edge == f"parking_{pzone}": 
+					reward += 1
+
+			cost += 1
+
+
+		# weights for cost1, cost2, and cost3, respectively
+		eta_cost, eta_reward = 1e-4, 1e-2
+
+		total = eta_reward*reward - eta_cost*cost #eta1 * cost1 + eta2 * cost2 #+ eta3*cost3
+		return total

@@ -24,9 +24,19 @@ from flow.utils.registry import make_create_env
 from flow.utils.rllib import FlowParamsEncoder
 from ray.rllib.agents.registry import get_agent_class
 
-def main():
+import argparse
+
+def main(args):
     # Setup vehicles and inflow
     vehicles = VehicleParams()
+
+    vehicles.add("human", 
+             acceleration_controller=(curbsideAccelController, {}),
+             lane_change_controller=(curbsideLaneChangeController, {}),
+             car_following_params=SumoCarFollowingParams(
+                 speed_mode="obey_safe_speed"),  # we use the speed mode "obey_safe_speed" for better dynamics at the merge
+             routing_controller=(curbsideRouter, {}),
+             num_vehicles=10)
 
     vehicles.add(veh_id="rl",
                  acceleration_controller=(RLController, {}),
@@ -37,8 +47,8 @@ def main():
     # other parameters
 
     additional_net_params = ADDITIONAL_NET_PARAMS.copy()
-    additional_net_params["length_inflow"] = 50
-    additional_net_params['number_parking_zones'] = 10
+    #additional_net_params["length_inflow"] = 50
+    #additional_net_params['number_parking_zones'] = 10
 
     net_params = NetParams(#inflows=inflow,  # our inflows
                            additional_params=additional_net_params)
@@ -54,7 +64,7 @@ def main():
 
     flow_params = dict(
         exp_tag='curbside',
-        env_name=CurbsideEnv,
+        env_name=CurbsideTrafficEnv,
         network=curbsideNetwork,
         simulator='custom_traci',
         sim=sim_params,
@@ -65,13 +75,13 @@ def main():
     )
 
     # number of time steps
-    HORIZON = 1000
+    HORIZON = args.horizon
     flow_params['env'].horizon = HORIZON
 
     # number of parallel workers
-    N_CPUS = 4
+    N_CPUS = args.ncpu
     # number of rollouts per training iteration
-    N_ROLLOUTS = 50
+    N_ROLLOUTS = 50 
 
     ray.init(num_cpus=N_CPUS)
 
@@ -123,5 +133,36 @@ def main():
         },
     })
 
-if __name__ == "__main__":
-    main()
+
+
+def create_parser():
+    """Create the parser to capture CLI arguments."""
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description='[Flow] Training curbside scenarios.',
+        epilog=EXAMPLE_USAGE)
+    
+    #parser.add_argument(
+    #    'scenario', type=str, help='scenario to run')
+ 
+    # optional input parameters
+    parser.add_argument(
+        '--ncpu',
+        type=int,
+        default=2,
+        help="Number cpus")
+    parser.add_argument(
+        '--horizon',
+        type=int,
+        help='Specifies the horizon.')
+    parser.add_argument(
+        '--scenario',
+        type=str,
+        help='scenario to run')
+
+    return parser
+
+if __name__ == '__main__':
+    parser = create_parser()
+    args = parser.parse_args()
+    main(args)
